@@ -9,10 +9,12 @@ this crate adheres to
 
 ## [Unreleased]
 
-Implementation pending. See the
-[Philharmonic workspace ROADMAP](https://github.com/metastable-void/philharmonic-workspace/blob/main/ROADMAP.md)
-for the phase that populates this crate.
+## [0.1.0] - 2026-04-24
 
-## [0.0.0]
-
-Name reservation on crates.io. No functional content yet.
+- First functional release of `sql_mysql` implementing the
+  `sql_query` connector capability.
+- Added typed JSON response mapping for MySQL result sets,
+  including precision-preserving decimal handling and
+  unsigned-integer overflow protection.
+- Added unit tests and Docker-gated integration tests against
+  `mysql:8.0` via testcontainers.

@@ -1,6 +1,6 @@
 [package]
 name = "philharmonic-connector-impl-sql-mysql"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0 OR MPL-2.0"
@@ -9,6 +9,28 @@ repository = "https://github.com/metastable-void/philharmonic-connector-impl-sql
 description = "MySQL connector implementation for Philharmonic (sql_query capability)."
 
 [dependencies]
+philharmonic-connector-impl-api = "0.1"
+philharmonic-connector-common = "0.2"
+async-trait = "0.1"
+base64 = "0.22"
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+sqlx = { version = "0.8", default-features = false, features = ["mysql", "runtime-tokio-rustls", "json", "chrono", "uuid"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[dev-dependencies]
+# `serial_test::file_serial(key = "docker")` serializes
+# Docker-backed testcontainer tests across test crates so
+# that spinning up multiple MySQL containers in parallel
+# doesn't OOM the host. Works cross-process via a lockfile,
+# which is what cargo test's "each tests/*.rs is its own
+# binary" execution model needs.
+serial_test = { version = "3", features = ["file_locks"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "test-util"] }
+testcontainers = "0.27"
 
 [profile.release]
 opt-level = 3

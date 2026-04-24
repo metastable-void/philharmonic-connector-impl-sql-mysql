@@ -1,6 +1,13 @@
 # philharmonic-connector-impl-sql-mysql
 
-Part of the Philharmonic workspace: https://github.com/metastable-void/philharmonic-workspace
+`sql_mysql` implements Philharmonic's `sql_query` capability for
+MySQL-family databases (MySQL 8, MariaDB 10.5+, Aurora MySQL, TiDB)
+via `sqlx` (`mysql` + `runtime-tokio-rustls`). It executes
+parameterized `?`-placeholder queries, enforces per-config caps for
+`timeout_ms` and `max_rows`, returns typed JSON rows plus ordered
+column metadata, and maps upstream/database failures into
+`ImplementationError` categories defined by the connector wire
+protocol.
 
 ## Contributing
 
