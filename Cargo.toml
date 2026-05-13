@@ -30,7 +30,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # binary" execution model needs.
 serial_test = { version = "3", features = ["file_locks"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "test-util"] }
-testcontainers = "0.27"
+testcontainers = { version = "0.27", default-features = false, features = ["aws-lc-rs"] }
 
 [profile.release]
 opt-level = 3
