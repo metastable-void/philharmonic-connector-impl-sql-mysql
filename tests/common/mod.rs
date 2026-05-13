@@ -1,22 +1,58 @@
+use dockerlet::{Container, GenericImage, IntoContainerPort, WaitFor};
 use philharmonic_connector_common::{UnixMillis, Uuid};
 use philharmonic_connector_impl_sql_mysql::{
     ConnectorCallContext, Implementation, ImplementationError, JsonValue, SqlMysql,
 };
 use sqlx::{MySqlPool, mysql::MySqlPoolOptions};
-use std::{sync::OnceLock, time::Duration};
-use testcontainers::{
-    ContainerAsync, GenericImage, ImageExt, core::IntoContainerPort, runners::AsyncRunner,
-};
-use tokio::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+use tokio::sync::OnceCell;
 
 pub type TestResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-type ContainerHandle = ContainerAsync<GenericImage>;
+
+/// Warm shared MySQL container; same pattern as
+/// philharmonic-store-sqlx-mysql/tests/integration.rs (D23 round
+/// 01 follow-up). Per-test isolation by unique database name.
+static SHARED_MYSQL: OnceCell<SharedMysql> = OnceCell::const_new();
+
+struct SharedMysql {
+    _container: Container,
+    /// `mysql://root:rootpass@{host}:{port}` (no path component).
+    base_url: String,
+}
+
+async fn shared_mysql() -> &'static SharedMysql {
+    SHARED_MYSQL
+        .get_or_init(|| async {
+            let container = GenericImage::new("mysql", "8.0")
+                .with_exposed_port(3306.tcp())
+                .with_env_var("MYSQL_ROOT_PASSWORD", "rootpass")
+                .with_wait_for(WaitFor::message_on_stderr("ready for connections"))
+                .with_startup_timeout(Duration::from_secs(180))
+                .start()
+                .await
+                .expect("start shared MySQL container");
+            let host = container.get_host().await.expect("container host");
+            let port = container
+                .get_host_port_ipv4(3306.tcp())
+                .await
+                .expect("container port");
+            SharedMysql {
+                _container: container,
+                base_url: format!("mysql://root:rootpass@{host}:{port}"),
+            }
+        })
+        .await
+}
+
+fn unique_db_name() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("dl_t_{}_{n}", std::process::id())
+}
 
 pub struct Harness {
-    #[allow(dead_code)]
-    serial_guard: MutexGuard<'static, ()>,
-    #[allow(dead_code)]
-    pub container: ContainerHandle,
+    db_name: String,
     #[allow(dead_code)]
     pub pool: MySqlPool,
     pub connector: SqlMysql,
@@ -24,10 +60,31 @@ pub struct Harness {
     pub ctx: ConnectorCallContext,
 }
 
-static TEST_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
-
-fn test_mutex() -> &'static Mutex<()> {
-    TEST_MUTEX.get_or_init(|| Mutex::new(()))
+impl Drop for Harness {
+    fn drop(&mut self) {
+        let db_name = std::mem::take(&mut self.db_name);
+        let base_url = SHARED_MYSQL
+            .get()
+            .map(|s| s.base_url.clone())
+            .unwrap_or_default();
+        std::thread::spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(_) => return,
+            };
+            runtime.block_on(async move {
+                if let Ok(pool) = MySqlPool::connect(&format!("{base_url}/mysql")).await {
+                    let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS `{db_name}`"))
+                        .execute(&pool)
+                        .await;
+                }
+            });
+        });
+    }
 }
 
 fn context() -> ConnectorCallContext {
@@ -42,20 +99,16 @@ fn context() -> ConnectorCallContext {
 }
 
 pub async fn setup() -> TestResult<Harness> {
-    let guard = test_mutex().lock().await;
+    let shared = shared_mysql().await;
+    let db_name = unique_db_name();
 
-    let image = GenericImage::new("mysql", "8.0")
-        .with_exposed_port(3306.tcp())
-        .with_env_var("MYSQL_ROOT_PASSWORD", "rootpass")
-        .with_env_var("MYSQL_DATABASE", "philharmonic_test")
-        .with_startup_timeout(Duration::from_secs(180));
+    let admin = connect_with_retry(&format!("{}/mysql", shared.base_url)).await?;
+    sqlx::query(&format!("CREATE DATABASE `{db_name}`"))
+        .execute(&admin)
+        .await?;
+    drop(admin);
 
-    let container = image.start().await?;
-
-    let host = container.get_host().await?;
-    let port = container.get_host_port_ipv4(3306.tcp()).await?;
-    let connection_url = format!("mysql://root:rootpass@{host}:{port}/philharmonic_test");
-
+    let connection_url = format!("{}/{db_name}", shared.base_url);
     let pool = connect_with_retry(&connection_url).await?;
 
     sqlx::query("SET time_zone = '+00:00'")
@@ -70,8 +123,7 @@ pub async fn setup() -> TestResult<Harness> {
     });
 
     Ok(Harness {
-        serial_guard: guard,
-        container,
+        db_name,
         pool,
         connector: SqlMysql::new(),
         config,

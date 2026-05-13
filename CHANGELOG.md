@@ -9,6 +9,12 @@ this crate adheres to
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-13
+
+- Dev: migrate integration-test fixtures from `testcontainers` /
+  `testcontainers-modules` to `dockerlet 0.1`. No public-API
+  change; runtime behaviour unchanged.
+
 ## [0.1.0] - 2026-04-24
 
 - First functional release of `sql_mysql` implementing the
